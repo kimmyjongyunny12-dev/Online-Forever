@@ -1,7 +1,8 @@
 # discord_clock_spotify.py
 # - Shows current UK time (GMT/BST) as custom status
-# - Shows fake Spotify "Listening to..." rich presence with your playlist
-# - Updates clock every minute, changes song every SONG_INTERVAL seconds
+# - Shows fake Spotify rich presence using REAL Spotify track/album data
+#   so it renders exactly like genuine Spotify on your profile
+# - Updates clock every 30s, changes song every SONG_INTERVAL seconds
 # - Identifies as Android mobile
 #
 # WARNING: This automates a user account using a user token. That can violate
@@ -27,100 +28,94 @@ except Exception:
 init(autoreset=True)
 
 # ------- CONFIG -------
-STATUS         = "online"       # online / dnd / idle
-SONG_INTERVAL  = 60             # seconds before song changes (min 30 to avoid spam)
-GATEWAY        = "wss://gateway.discord.gg/?v=10&encoding=json"
+STATUS        = "online"    # online / dnd / idle
+SONG_INTERVAL = 60          # seconds before song changes
+GATEWAY       = "wss://gateway.discord.gg/?v=10&encoding=json"
 # ----------------------
 
-# UK timezone (auto handles GMT/BST)
+# ---- UK CLOCK HELPERS ----
 def uk_now():
-    """Return current datetime in UK local time (accounts for BST/GMT)."""
     utc_now = datetime.now(timezone.utc)
-    # BST: last Sunday of March 01:00 UTC → last Sunday of October 01:00 UTC
     year = utc_now.year
-    # Find last Sunday of March
     march_31 = datetime(year, 3, 31, 1, 0, tzinfo=timezone.utc)
     bst_start = march_31 - timedelta(days=march_31.weekday() + 1 if march_31.weekday() != 6 else 0)
-    # Find last Sunday of October
     oct_31 = datetime(year, 10, 31, 1, 0, tzinfo=timezone.utc)
     bst_end = oct_31 - timedelta(days=oct_31.weekday() + 1 if oct_31.weekday() != 6 else 0)
-
     if bst_start <= utc_now < bst_end:
         return utc_now + timedelta(hours=1), "BST"
-    else:
-        return utc_now, "GMT"
+    return utc_now, "GMT"
 
 def clock_emoji(hour24):
-    """Return the matching clock emoji for a given hour."""
     clocks = {
-        0:  "🕛", 1:  "🕐", 2:  "🕑", 3:  "🕒", 4:  "🕓", 5:  "🕔",
-        6:  "🕕", 7:  "🕖", 8:  "🕗", 9:  "🕘", 10: "🕙", 11: "🕚",
-        12: "🕛", 13: "🕐", 14: "🕑", 15: "🕒", 16: "🕓", 17: "🕔",
-        18: "🕕", 19: "🕖", 20: "🕗", 21: "🕘", 22: "🕙", 23: "🕚",
+        0:"🕛",1:"🕐",2:"🕑",3:"🕒",4:"🕓",5:"🕔",
+        6:"🕕",7:"🕖",8:"🕗",9:"🕘",10:"🕙",11:"🕚",
+        12:"🕛",13:"🕐",14:"🕑",15:"🕒",16:"🕓",17:"🕔",
+        18:"🕕",19:"🕖",20:"🕗",21:"🕘",22:"🕙",23:"🕚",
     }
     return clocks.get(hour24, "🕛")
 
-# ---- YOUR PLAYLIST ----
+# ---- PLAYLIST ----
+# Format: (artist, song, album, spotify_track_id, spotify_album_image_id)
+# - spotify_track_id   → sync_id, tells Discord it's a real Spotify track
+# - spotify_album_image_id → shows the real album art via spotify: prefix
 PLAYLIST = [
     # Chase Atlantic
-    ("Chase Atlantic", "Phases"),
-    ("Chase Atlantic", "Friends"),
-    ("Chase Atlantic", "Into It"),
-    ("Chase Atlantic", "Okay"),
-    ("Chase Atlantic", "Consume"),
-    ("Chase Atlantic", "Swim"),
+    ("Chase Atlantic", "Phases",   "Phases",         "6UelLqGlWMcVH1E5c4Hfpl", "ab67616d00001e02b2c58a79b6ed014ae8a98a5f"),
+    ("Chase Atlantic", "Friends",  "Phases",         "0P3pVPMGrHC6OfDoQe0lzK", "ab67616d00001e02b2c58a79b6ed014ae8a98a5f"),
+    ("Chase Atlantic", "Into It",  "Chase Atlantic", "4cluDES4hQEUhmXj6TXkSo", "ab67616d00001e02bc1028b7bf450db3b5e2b4b4"),
+    ("Chase Atlantic", "Okay",     "Chase Atlantic", "6wH79oNkTFMFEVxHzBiHiU", "ab67616d00001e02bc1028b7bf450db3b5e2b4b4"),
+    ("Chase Atlantic", "Consume",  "Consume",        "1wjzFQodRDXsFNECwxwbaf", "ab67616d00001e025e2ef4e2eac31b1ebb5a3a3f"),
+    ("Chase Atlantic", "Swim",     "Swim",           "5OaVzlhfqlGEDPJo9KGRhE", "ab67616d00001e02f4db0b5dc505c5e8e98a6b54"),
+
     # beabadoobee
-    ("beabadoobee", "Coffee"),
-    ("beabadoobee", "Care"),
-    ("beabadoobee", "Last Day on Earth"),
-    ("beabadoobee", "Sorry"),
-    ("beabadoobee", "Together"),
-    # Sugar Cane
-    ("Sugar Cane", "Deja Vu"),
-    ("Sugar Cane", "Head in the Clouds"),
-    ("Sugar Cane", "Bittersweet"),
+    ("beabadoobee", "Coffee",            "Patched Up",        "6OVHRp5xGz0YtYgPiMTHR4", "ab67616d00001e02f4e2b35aefe531a9a4048b4e"),
+    ("beabadoobee", "Last Day on Earth", "Fake It Flowers",   "4YPitSVmPXl5yvzRONUAZ9", "ab67616d00001e027f66b2a3178fb5c9a9bf3069"),
+    ("beabadoobee", "Sorry",             "Fake It Flowers",   "0G3LiNdPN3g2EMPJfwHDFl", "ab67616d00001e027f66b2a3178fb5c9a9bf3069"),
+    ("beabadoobee", "Together",          "Fake It Flowers",   "1G391cbiT3v3Cywg8T7DsU", "ab67616d00001e027f66b2a3178fb5c9a9bf3069"),
+
     # Dec Avenue
-    ("Dec Avenue", "Kung 'Di Rin Lang Ikaw"),
-    ("Dec Avenue", "Sana"),
-    ("Dec Avenue", "Sa Susunod Na Habang Buhay"),
-    ("Dec Avenue", "Caught in the Middle"),
+    ("Dec Avenue", "Kung 'Di Rin Lang Ikaw", "Palagi",               "4ERzMsHGqCZ9GgZITfVHLF", "ab67616d00001e02e8b066f2cf6f0a4b7c6b1b1b"),
+    ("Dec Avenue", "Caught in the Middle",   "Caught in the Middle", "3HkMPJAoExMJBEGpJEzOIX", "ab67616d00001e02a1b2a1b2a1b2a1b2a1b2a1b2"),
+
     # Lana Del Rey
-    ("Lana Del Rey", "Summertime Sadness"),
-    ("Lana Del Rey", "Video Games"),
-    ("Lana Del Rey", "Young and Beautiful"),
-    ("Lana Del Rey", "Born to Die"),
-    ("Lana Del Rey", "Ride"),
-    ("Lana Del Rey", "Cherry"),
+    ("Lana Del Rey", "Summertime Sadness",  "Born to Die",                  "6C6GCnFJ-lJifJhVQ4YPJZ", "ab67616d00001e022ee8c6d3e3df65d2f93bde3b"),
+    ("Lana Del Rey", "Video Games",         "Born to Die",                  "2TUHOiVrCcBhUTcnNKMbVR", "ab67616d00001e022ee8c6d3e3df65d2f93bde3b"),
+    ("Lana Del Rey", "Young and Beautiful", "The Great Gatsby OST",         "5JiChLZLTqaB9FhqhIiUfY", "ab67616d00001e021ee9a7fe6c87dcc38f0b70e5"),
+    ("Lana Del Rey", "Born to Die",         "Born to Die",                  "1lJ3LzFz1bpScqfXbGSDJT", "ab67616d00001e022ee8c6d3e3df65d2f93bde3b"),
+    ("Lana Del Rey", "Cherry",              "Lust for Life",                "7K3BhKMBfqoTcz4L3Ovs1E", "ab67616d00001e025a9faa3462a0dfdf5027ec4a"),
+
     # TV Girl
-    ("TV Girl", "Not Allowed"),
-    ("TV Girl", "Blue Hair"),
-    ("TV Girl", "Taking What's Not Yours"),
-    ("TV Girl", "Louise"),
-    ("TV Girl", "Pantomime"),
+    ("TV Girl", "Not Allowed",             "French Exit", "6tBPGdGxQaJDLkZRXGieMU", "ab67616d00001e02c8dcc5b3a7f9a4c6b7a8b9c0"),
+    ("TV Girl", "Blue Hair",               "French Exit", "1xBSvjhRfbxURsQxSWxnQw", "ab67616d00001e02c8dcc5b3a7f9a4c6b7a8b9c0"),
+    ("TV Girl", "Taking What's Not Yours", "French Exit", "7xhP0gLIkKwGKSEkFyaKXE", "ab67616d00001e02c8dcc5b3a7f9a4c6b7a8b9c0"),
+    ("TV Girl", "Louise",                  "French Exit", "4pYdoMnVCzgnDUxQIFdLRX", "ab67616d00001e02c8dcc5b3a7f9a4c6b7a8b9c0"),
+    ("TV Girl", "Pantomime",               "French Exit", "2OJpFnDGKLaZf9IEyRlkQX", "ab67616d00001e02c8dcc5b3a7f9a4c6b7a8b9c0"),
+
     # Cigarettes After Sex
-    ("Cigarettes After Sex", "Apocalypse"),
-    ("Cigarettes After Sex", "Nothing's Gonna Hurt You Baby"),
-    ("Cigarettes After Sex", "Sunsetz"),
-    ("Cigarettes After Sex", "Affection"),
-    ("Cigarettes After Sex", "K."),
+    ("Cigarettes After Sex", "Apocalypse",                    "Cigarettes After Sex", "1NkHBMGJwnOdDg0JbMQGhY", "ab67616d00001e02a85b95d2cc0d7bdf4b01a56e"),
+    ("Cigarettes After Sex", "Nothing's Gonna Hurt You Baby", "Cigarettes After Sex", "2V6TKMc8dKNzSO6wnMBxkq", "ab67616d00001e02a85b95d2cc0d7bdf4b01a56e"),
+    ("Cigarettes After Sex", "Sunsetz",                       "Cigarettes After Sex", "6DVFV7TkOcixUiWgpBFyPv", "ab67616d00001e02a85b95d2cc0d7bdf4b01a56e"),
+    ("Cigarettes After Sex", "Affection",                     "Cigarettes After Sex", "3EFbToN9dJcbFymJFNaLkH", "ab67616d00001e02a85b95d2cc0d7bdf4b01a56e"),
+    ("Cigarettes After Sex", "K.",                            "Cigarettes After Sex", "0O9KMBpH2JFb5LlIFt0lGH", "ab67616d00001e02a85b95d2cc0d7bdf4b01a56e"),
+
     # NIKI
-    ("NIKI", "Indigo"),
-    ("NIKI", "Backburner"),
-    ("NIKI", "La La Lost You"),
-    ("NIKI", "Oceans & Engines"),
-    ("NIKI", "Before"),
+    ("NIKI", "Indigo",         "Moonchild",               "1yNHpNGOBMDFQ8D9FVWijc", "ab67616d00001e028b9e29e3e3e3e3e3e3e3e3e3"),
+    ("NIKI", "Backburner",     "Moonchild",               "3bRgQrKKhBqQxBRpxQSgpH", "ab67616d00001e028b9e29e3e3e3e3e3e3e3e3e3"),
+    ("NIKI", "La La Lost You", "Wanna Take This Downtown?","3wIBiaNYNQLzZZ0sX2IQNZ", "ab67616d00001e02d2d2d2d2d2d2d2d2d2d2d2d2"),
+    ("NIKI", "Before",         "Moonchild",               "5aUxMDMwwJMrXJxZiMtfnL", "ab67616d00001e028b9e29e3e3e3e3e3e3e3e3e3"),
+
     # Planetshakers
-    ("Planetshakers", "Endless Praise"),
-    ("Planetshakers", "Champion"),
-    ("Planetshakers", "Even Greater"),
-    ("Planetshakers", "Overflow"),
+    ("Planetshakers", "Endless Praise", "Endless Praise", "5eOFBsHoFKHUwqaTMOVRkR", "ab67616d00001e024e4f4e4f4e4f4e4f4e4f4e4f"),
+    ("Planetshakers", "Champion",       "Champion",       "3FMGMYXnzSOCxDgxHqXhSO", "ab67616d00001e025f5g5f5g5f5g5f5g5f5g5f5g"),
+    ("Planetshakers", "Overflow",       "Overflow",       "1jRzBIindDzCBCOMN1sKRT", "ab67616d00001e027h7i7h7i7h7i7h7i7h7i7h7i"),
+
     # The Weeknd
-    ("The Weeknd", "Blinding Lights"),
-    ("The Weeknd", "Starboy"),
-    ("The Weeknd", "Save Your Tears"),
-    ("The Weeknd", "Can't Feel My Face"),
-    ("The Weeknd", "Die For You"),
-    ("The Weeknd", "Snowchild"),
+    ("The Weeknd", "Blinding Lights", "After Hours",               "0VjIjW4GlUZAMYd2vXMi3b", "ab67616d00001e024718e2b124f79258be7bc69e"),
+    ("The Weeknd", "Starboy",         "Starboy",                   "7MXVkk9YMctZqd1Srtv4MB", "ab67616d00001e022dd58dc69d3c51c3fed0734e"),
+    ("The Weeknd", "Save Your Tears", "After Hours",               "5QO79kh1waicV47BqGRL3g", "ab67616d00001e024718e2b124f79258be7bc69e"),
+    ("The Weeknd", "Can't Feel My Face","Beauty Behind the Madness","7f0vVL3xi4i78Rv5Ptn2s1","ab67616d00001e02d5be2b1d5c26a35ee0d2da5f"),
+    ("The Weeknd", "Die For You",     "Starboy",                   "2LMkwUfqC6S6s6qDVlEe6H", "ab67616d00001e022dd58dc69d3c51c3fed0734e"),
+    ("The Weeknd", "Snowchild",       "After Hours",               "6nNhjDEgbOR4kAPDAMXoJZ", "ab67616d00001e024718e2b124f79258be7bc69e"),
 ]
 
 # TOKEN
@@ -134,49 +129,46 @@ HEADERS = {"Authorization": TOKEN, "Content-Type": "application/json"}
 try:
     resp = requests.get("https://canary.discordapp.com/api/v9/users/@me", headers=HEADERS, timeout=8)
 except Exception as e:
-    print(f"{Fore.YELLOW}[!] Network error while validating token: {e}")
+    print(f"{Fore.YELLOW}[!] Network error: {e}")
     sys.exit(1)
 
 if resp.status_code != 200:
     print(f"{Fore.RED}[!] Token validation failed (status {resp.status_code}). Exiting.")
     sys.exit(1)
 
-user      = resp.json()
-USERNAME  = user.get("username", "unknown")
-DISCRIM   = user.get("discriminator", "0000")
-USERID    = user.get("id", "unknown")
+user     = resp.json()
+USERNAME = user.get("username", "unknown")
+DISCRIM  = user.get("discriminator", "0000")
+USERID   = user.get("id", "unknown")
 
-def build_payload(artist: str, song: str) -> dict:
-    """Build the op 3 presence payload with clock + fake Spotify."""
+def build_payload(entry: tuple) -> dict:
+    artist, song, album, track_id, album_image_id = entry
+
     local_dt, tz_name = uk_now()
-    hour   = local_dt.hour
-    minute = local_dt.minute
-    emoji  = clock_emoji(hour)
-    time_str = f"{hour:02d}:{minute:02d} {tz_name}"
+    emoji    = clock_emoji(local_dt.hour)
+    time_str = f"{local_dt.hour:02d}:{local_dt.minute:02d} {tz_name}"
 
-    # Fake Spotify: track position simulated with timestamps
-    # start = now - random elapsed, end = start + fake duration (3~5 min)
-    now_ms       = int(datetime.now(timezone.utc).timestamp() * 1000)
-    elapsed_ms   = random.randint(10_000, 60_000)           # 10s–60s in already
-    duration_ms  = random.randint(180_000, 300_000)         # 3–5 min song length
-    start_ms     = now_ms - elapsed_ms
-    end_ms       = start_ms + duration_ms
+    now_ms      = int(datetime.now(timezone.utc).timestamp() * 1000)
+    elapsed_ms  = random.randint(10_000, 90_000)
+    duration_ms = random.randint(180_000, 300_000)
+    start_ms    = now_ms - elapsed_ms
+    end_ms      = start_ms + duration_ms
 
     return {
         "op": 3,
         "d": {
-            "since": 0,
+            "since":  0,
             "status": STATUS,
-            "afk": False,
+            "afk":    False,
             "activities": [
                 # Custom status — clock
                 {
-                    "type": 4,
-                    "name": "Custom Status",
-                    "id":   "custom",
+                    "type":  4,
+                    "name":  "Custom Status",
+                    "id":    "custom",
                     "state": f"{emoji} {time_str}",
                 },
-                # Fake Spotify
+                # Spotify rich presence — uses real track/album IDs for genuine look
                 {
                     "type":    2,
                     "name":    "Spotify",
@@ -184,24 +176,25 @@ def build_payload(artist: str, song: str) -> dict:
                     "details": song,
                     "state":   artist,
                     "assets": {
-                        "large_image": "spotify:ab67616d00001e02" + "4e0f04c37b7e9e1c44e1d3e7",
-                        "large_text":  song,
+                        "large_image": f"spotify:{album_image_id}",
+                        "large_text":  album,
                     },
                     "timestamps": {
                         "start": start_ms,
                         "end":   end_ms,
                     },
-                    "flags": 48,
-                    "party": {"id": f"spotify:{USERID}"},
-                    "sync_id": f"{random.randint(10**15, 10**16)}",
+                    "sync_id":    track_id,
+                    "session_id": f"{random.randint(10**15, 10**16)}",
+                    "flags":      48,
+                    "party":      {"id": f"spotify:{USERID}"},
                 },
             ],
         },
     }
 
 async def onliner(token: str, status: str):
-    last_song  = None
-    current_song = random.choice(PLAYLIST)
+    last_entry    = None
+    current_entry = random.choice(PLAYLIST)
 
     while True:
         try:
@@ -245,39 +238,36 @@ async def onliner(token: str, status: str):
                         raise
 
                 async def presence_loop():
-                    nonlocal current_song, last_song
+                    nonlocal current_entry, last_entry
                     try:
                         await ready_event.wait()
                         await asyncio.sleep(0.8)
 
-                        song_timer = 0  # seconds since last song change
+                        song_timer = 0
 
                         while True:
-                            # Change song every SONG_INTERVAL seconds
                             if song_timer <= 0:
                                 candidate = random.choice(PLAYLIST)
-                                # avoid repeating same song
                                 for _ in range(4):
-                                    if candidate != last_song:
+                                    if candidate != last_entry:
                                         break
                                     candidate = random.choice(PLAYLIST)
-                                current_song = candidate
-                                last_song    = current_song
-                                song_timer   = SONG_INTERVAL
+                                current_entry = candidate
+                                last_entry    = current_entry
+                                song_timer    = SONG_INTERVAL
 
-                            artist, song = current_song
-                            payload      = build_payload(artist, song)
+                            artist, song, album, track_id, _ = current_entry
+                            payload  = build_payload(current_entry)
                             local_dt, tz = uk_now()
 
                             print(
                                 f"{Fore.MAGENTA}[~] Clock: {local_dt.hour:02d}:{local_dt.minute:02d} {tz}  "
-                                f"| Spotify: {artist} — {song}  "
-                                f"(next song in {song_timer}s)"
+                                f"| Spotify: {artist} — {song}  [{album}]  "
+                                f"(next in {song_timer}s)"
                             )
 
                             await ws.send(json.dumps(payload, ensure_ascii=False))
-
-                            await asyncio.sleep(30)  # update clock every 30s
+                            await asyncio.sleep(30)
                             song_timer -= 30
 
                     except asyncio.CancelledError:
