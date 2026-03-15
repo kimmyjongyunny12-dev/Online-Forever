@@ -1,7 +1,7 @@
 # discord_clock_spotify.py
 # - Shows current UK time (GMT/BST) as custom status
-# - Shows fake Spotify rich presence using REAL Spotify track/album data
-#   so it renders exactly like genuine Spotify on your profile
+# - Shows fake Spotify rich presence with REAL album art
+#   (fetches real image IDs from Spotify's public oEmbed API at startup)
 # - Updates clock every 30s, changes song every SONG_INTERVAL seconds
 # - Identifies as Android mobile
 #
@@ -55,68 +55,114 @@ def clock_emoji(hour24):
     return clocks.get(hour24, "🕛")
 
 # ---- PLAYLIST ----
-# Format: (artist, song, album, spotify_track_id, spotify_album_image_id)
-# - spotify_track_id   → sync_id, tells Discord it's a real Spotify track
-# - spotify_album_image_id → shows the real album art via spotify: prefix
+# Format: (artist, song, album, spotify_track_id)
+# Album image IDs are fetched automatically at startup from Spotify's public API
 PLAYLIST = [
     # Chase Atlantic
-    ("Chase Atlantic", "Phases",   "Phases",         "6UelLqGlWMcVH1E5c4Hfpl", "ab67616d00001e02b2c58a79b6ed014ae8a98a5f"),
-    ("Chase Atlantic", "Friends",  "Phases",         "0P3pVPMGrHC6OfDoQe0lzK", "ab67616d00001e02b2c58a79b6ed014ae8a98a5f"),
-    ("Chase Atlantic", "Into It",  "Chase Atlantic", "4cluDES4hQEUhmXj6TXkSo", "ab67616d00001e02bc1028b7bf450db3b5e2b4b4"),
-    ("Chase Atlantic", "Okay",     "Chase Atlantic", "6wH79oNkTFMFEVxHzBiHiU", "ab67616d00001e02bc1028b7bf450db3b5e2b4b4"),
-    ("Chase Atlantic", "Consume",  "Consume",        "1wjzFQodRDXsFNECwxwbaf", "ab67616d00001e025e2ef4e2eac31b1ebb5a3a3f"),
-    ("Chase Atlantic", "Swim",     "Swim",           "5OaVzlhfqlGEDPJo9KGRhE", "ab67616d00001e02f4db0b5dc505c5e8e98a6b54"),
+    ("Chase Atlantic", "Phases",   "Phases",         "6UelLqGlWMcVH1E5c4Hfpl"),
+    ("Chase Atlantic", "Friends",  "Phases",         "0P3pVPMGrHC6OfDoQe0lzK"),
+    ("Chase Atlantic", "Into It",  "Chase Atlantic", "4cluDES4hQEUhmXj6TXkSo"),
+    ("Chase Atlantic", "Okay",     "Chase Atlantic", "6wH79oNkTFMFEVxHzBiHiU"),
+    ("Chase Atlantic", "Consume",  "Consume",        "1wjzFQodRDXsFNECwxwbaf"),
+    ("Chase Atlantic", "Swim",     "Swim",           "5OaVzlhfqlGEDPJo9KGRhE"),
 
     # beabadoobee
-    ("beabadoobee", "Coffee",            "Patched Up",        "6OVHRp5xGz0YtYgPiMTHR4", "ab67616d00001e02f4e2b35aefe531a9a4048b4e"),
-    ("beabadoobee", "Last Day on Earth", "Fake It Flowers",   "4YPitSVmPXl5yvzRONUAZ9", "ab67616d00001e027f66b2a3178fb5c9a9bf3069"),
-    ("beabadoobee", "Sorry",             "Fake It Flowers",   "0G3LiNdPN3g2EMPJfwHDFl", "ab67616d00001e027f66b2a3178fb5c9a9bf3069"),
-    ("beabadoobee", "Together",          "Fake It Flowers",   "1G391cbiT3v3Cywg8T7DsU", "ab67616d00001e027f66b2a3178fb5c9a9bf3069"),
+    ("beabadoobee", "Coffee",            "Patched Up",      "6OVHRp5xGz0YtYgPiMTHR4"),
+    ("beabadoobee", "Last Day on Earth", "Fake It Flowers", "4YPitSVmPXl5yvzRONUAZ9"),
+    ("beabadoobee", "Sorry",             "Fake It Flowers", "0G3LiNdPN3g2EMPJfwHDFl"),
+    ("beabadoobee", "Together",          "Fake It Flowers", "1G391cbiT3v3Cywg8T7DsU"),
 
     # Dec Avenue
-    ("Dec Avenue", "Kung 'Di Rin Lang Ikaw", "Palagi",               "4ERzMsHGqCZ9GgZITfVHLF", "ab67616d00001e02e8b066f2cf6f0a4b7c6b1b1b"),
-    ("Dec Avenue", "Caught in the Middle",   "Caught in the Middle", "3HkMPJAoExMJBEGpJEzOIX", "ab67616d00001e02a1b2a1b2a1b2a1b2a1b2a1b2"),
+    ("Dec Avenue", "Kung 'Di Rin Lang Ikaw", "Palagi",               "4ERzMsHGqCZ9GgZITfVHLF"),
+    ("Dec Avenue", "Caught in the Middle",   "Caught in the Middle", "3HkMPJAoExMJBEGpJEzOIX"),
 
     # Lana Del Rey
-    ("Lana Del Rey", "Summertime Sadness",  "Born to Die",                  "6C6GCnFJ-lJifJhVQ4YPJZ", "ab67616d00001e022ee8c6d3e3df65d2f93bde3b"),
-    ("Lana Del Rey", "Video Games",         "Born to Die",                  "2TUHOiVrCcBhUTcnNKMbVR", "ab67616d00001e022ee8c6d3e3df65d2f93bde3b"),
-    ("Lana Del Rey", "Young and Beautiful", "The Great Gatsby OST",         "5JiChLZLTqaB9FhqhIiUfY", "ab67616d00001e021ee9a7fe6c87dcc38f0b70e5"),
-    ("Lana Del Rey", "Born to Die",         "Born to Die",                  "1lJ3LzFz1bpScqfXbGSDJT", "ab67616d00001e022ee8c6d3e3df65d2f93bde3b"),
-    ("Lana Del Rey", "Cherry",              "Lust for Life",                "7K3BhKMBfqoTcz4L3Ovs1E", "ab67616d00001e025a9faa3462a0dfdf5027ec4a"),
+    ("Lana Del Rey", "Summertime Sadness",  "Born to Die",         "6C6GCnFJ-lJifJhVQ4YPJZ"),
+    ("Lana Del Rey", "Video Games",         "Born to Die",         "2TUHOiVrCcBhUTcnNKMbVR"),
+    ("Lana Del Rey", "Young and Beautiful", "The Great Gatsby OST","5JiChLZLTqaB9FhqhIiUfY"),
+    ("Lana Del Rey", "Born to Die",         "Born to Die",         "1lJ3LzFz1bpScqfXbGSDJT"),
+    ("Lana Del Rey", "Cherry",              "Lust for Life",       "7K3BhKMBfqoTcz4L3Ovs1E"),
 
     # TV Girl
-    ("TV Girl", "Not Allowed",             "French Exit", "6tBPGdGxQaJDLkZRXGieMU", "ab67616d00001e02c8dcc5b3a7f9a4c6b7a8b9c0"),
-    ("TV Girl", "Blue Hair",               "French Exit", "1xBSvjhRfbxURsQxSWxnQw", "ab67616d00001e02c8dcc5b3a7f9a4c6b7a8b9c0"),
-    ("TV Girl", "Taking What's Not Yours", "French Exit", "7xhP0gLIkKwGKSEkFyaKXE", "ab67616d00001e02c8dcc5b3a7f9a4c6b7a8b9c0"),
-    ("TV Girl", "Louise",                  "French Exit", "4pYdoMnVCzgnDUxQIFdLRX", "ab67616d00001e02c8dcc5b3a7f9a4c6b7a8b9c0"),
-    ("TV Girl", "Pantomime",               "French Exit", "2OJpFnDGKLaZf9IEyRlkQX", "ab67616d00001e02c8dcc5b3a7f9a4c6b7a8b9c0"),
+    ("TV Girl", "Not Allowed",             "French Exit", "6tBPGdGxQaJDLkZRXGieMU"),
+    ("TV Girl", "Blue Hair",               "French Exit", "1xBSvjhRfbxURsQxSWxnQw"),
+    ("TV Girl", "Taking What's Not Yours", "French Exit", "7xhP0gLIkKwGKSEkFyaKXE"),
+    ("TV Girl", "Louise",                  "French Exit", "4pYdoMnVCzgnDUxQIFdLRX"),
+    ("TV Girl", "Pantomime",               "French Exit", "2OJpFnDGKLaZf9IEyRlkQX"),
 
     # Cigarettes After Sex
-    ("Cigarettes After Sex", "Apocalypse",                    "Cigarettes After Sex", "1NkHBMGJwnOdDg0JbMQGhY", "ab67616d00001e02a85b95d2cc0d7bdf4b01a56e"),
-    ("Cigarettes After Sex", "Nothing's Gonna Hurt You Baby", "Cigarettes After Sex", "2V6TKMc8dKNzSO6wnMBxkq", "ab67616d00001e02a85b95d2cc0d7bdf4b01a56e"),
-    ("Cigarettes After Sex", "Sunsetz",                       "Cigarettes After Sex", "6DVFV7TkOcixUiWgpBFyPv", "ab67616d00001e02a85b95d2cc0d7bdf4b01a56e"),
-    ("Cigarettes After Sex", "Affection",                     "Cigarettes After Sex", "3EFbToN9dJcbFymJFNaLkH", "ab67616d00001e02a85b95d2cc0d7bdf4b01a56e"),
-    ("Cigarettes After Sex", "K.",                            "Cigarettes After Sex", "0O9KMBpH2JFb5LlIFt0lGH", "ab67616d00001e02a85b95d2cc0d7bdf4b01a56e"),
+    ("Cigarettes After Sex", "Apocalypse",                    "Cigarettes After Sex", "1NkHBMGJwnOdDg0JbMQGhY"),
+    ("Cigarettes After Sex", "Nothing's Gonna Hurt You Baby", "Cigarettes After Sex", "2V6TKMc8dKNzSO6wnMBxkq"),
+    ("Cigarettes After Sex", "Sunsetz",                       "Cigarettes After Sex", "6DVFV7TkOcixUiWgpBFyPv"),
+    ("Cigarettes After Sex", "Affection",                     "Cigarettes After Sex", "3EFbToN9dJcbFymJFNaLkH"),
+    ("Cigarettes After Sex", "K.",                            "Cigarettes After Sex", "0O9KMBpH2JFb5LlIFt0lGH"),
 
     # NIKI
-    ("NIKI", "Indigo",         "Moonchild",               "1yNHpNGOBMDFQ8D9FVWijc", "ab67616d00001e028b9e29e3e3e3e3e3e3e3e3e3"),
-    ("NIKI", "Backburner",     "Moonchild",               "3bRgQrKKhBqQxBRpxQSgpH", "ab67616d00001e028b9e29e3e3e3e3e3e3e3e3e3"),
-    ("NIKI", "La La Lost You", "Wanna Take This Downtown?","3wIBiaNYNQLzZZ0sX2IQNZ", "ab67616d00001e02d2d2d2d2d2d2d2d2d2d2d2d2"),
-    ("NIKI", "Before",         "Moonchild",               "5aUxMDMwwJMrXJxZiMtfnL", "ab67616d00001e028b9e29e3e3e3e3e3e3e3e3e3"),
+    ("NIKI", "Indigo",         "Moonchild",                "1yNHpNGOBMDFQ8D9FVWijc"),
+    ("NIKI", "Backburner",     "Moonchild",                "3bRgQrKKhBqQxBRpxQSgpH"),
+    ("NIKI", "La La Lost You", "Wanna Take This Downtown?","3wIBiaNYNQLzZZ0sX2IQNZ"),
+    ("NIKI", "Before",         "Moonchild",                "5aUxMDMwwJMrXJxZiMtfnL"),
 
     # Planetshakers
-    ("Planetshakers", "Endless Praise", "Endless Praise", "5eOFBsHoFKHUwqaTMOVRkR", "ab67616d00001e024e4f4e4f4e4f4e4f4e4f4e4f"),
-    ("Planetshakers", "Champion",       "Champion",       "3FMGMYXnzSOCxDgxHqXhSO", "ab67616d00001e025f5g5f5g5f5g5f5g5f5g5f5g"),
-    ("Planetshakers", "Overflow",       "Overflow",       "1jRzBIindDzCBCOMN1sKRT", "ab67616d00001e027h7i7h7i7h7i7h7i7h7i7h7i"),
+    ("Planetshakers", "Endless Praise", "Endless Praise", "5eOFBsHoFKHUwqaTMOVRkR"),
+    ("Planetshakers", "Champion",       "Champion",       "3FMGMYXnzSOCxDgxHqXhSO"),
+    ("Planetshakers", "Overflow",       "Overflow",       "1jRzBIindDzCBCOMN1sKRT"),
 
     # The Weeknd
-    ("The Weeknd", "Blinding Lights", "After Hours",               "0VjIjW4GlUZAMYd2vXMi3b", "ab67616d00001e024718e2b124f79258be7bc69e"),
-    ("The Weeknd", "Starboy",         "Starboy",                   "7MXVkk9YMctZqd1Srtv4MB", "ab67616d00001e022dd58dc69d3c51c3fed0734e"),
-    ("The Weeknd", "Save Your Tears", "After Hours",               "5QO79kh1waicV47BqGRL3g", "ab67616d00001e024718e2b124f79258be7bc69e"),
-    ("The Weeknd", "Can't Feel My Face","Beauty Behind the Madness","7f0vVL3xi4i78Rv5Ptn2s1","ab67616d00001e02d5be2b1d5c26a35ee0d2da5f"),
-    ("The Weeknd", "Die For You",     "Starboy",                   "2LMkwUfqC6S6s6qDVlEe6H", "ab67616d00001e022dd58dc69d3c51c3fed0734e"),
-    ("The Weeknd", "Snowchild",       "After Hours",               "6nNhjDEgbOR4kAPDAMXoJZ", "ab67616d00001e024718e2b124f79258be7bc69e"),
+    ("The Weeknd", "Blinding Lights",   "After Hours",              "0VjIjW4GlUZAMYd2vXMi3b"),
+    ("The Weeknd", "Starboy",           "Starboy",                  "7MXVkk9YMctZqd1Srtv4MB"),
+    ("The Weeknd", "Save Your Tears",   "After Hours",              "5QO79kh1waicV47BqGRL3g"),
+    ("The Weeknd", "Can't Feel My Face","Beauty Behind the Madness","7f0vVL3xi4i78Rv5Ptn2s1"),
+    ("The Weeknd", "Die For You",       "Starboy",                  "2LMkwUfqC6S6s6qDVlEe6H"),
+    ("The Weeknd", "Snowchild",         "After Hours",              "6nNhjDEgbOR4kAPDAMXoJZ"),
 ]
+
+def fetch_image_id(track_id: str) -> str | None:
+    """
+    Fetch the real Spotify album image ID using Spotify's public oEmbed endpoint.
+    No API key needed. Returns the image hash (e.g. ab67616d00001e02xxxx...)
+    """
+    try:
+        url = f"https://open.spotify.com/oembed?url=https://open.spotify.com/track/{track_id}"
+        r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200:
+            thumbnail_url = r.json().get("thumbnail_url", "")
+            # thumbnail_url: https://i.scdn.co/image/ab67616d00001e02XXXXXXXX
+            if "/image/" in thumbnail_url:
+                return thumbnail_url.split("/image/")[-1]
+    except Exception as e:
+        print(f"{Fore.YELLOW}[!] oEmbed fetch failed for {track_id}: {e}")
+    return None
+
+def preload_image_ids(playlist: list) -> dict:
+    """
+    At startup, fetch real album image IDs for all unique track IDs.
+    Returns a dict: {track_id: image_id}
+    """
+    cache = {}
+    seen  = set()
+    total = sum(1 for entry in playlist if entry[3] not in seen and not seen.add(entry[3]))
+    done  = 0
+
+    print(f"{Fore.CYAN}[i] Fetching real album art for {total} tracks...")
+
+    for entry in playlist:
+        track_id = entry[3]
+        if track_id in cache:
+            continue
+
+        image_id = fetch_image_id(track_id)
+        done += 1
+
+        if image_id:
+            cache[track_id] = image_id
+            print(f"{Fore.GREEN}  [{done}/{total}] ✓ {entry[0]} — {entry[1]}")
+        else:
+            cache[track_id] = None
+            print(f"{Fore.YELLOW}  [{done}/{total}] ✗ {entry[0]} — {entry[1]} (no image, will skip album art)")
+
+    print(f"{Fore.GREEN}[+] Album art loaded: {sum(1 for v in cache.values() if v)}/{total} succeeded.\n")
+    return cache
 
 # TOKEN
 TOKEN = os.getenv("TOKEN")
@@ -141,8 +187,13 @@ USERNAME = user.get("username", "unknown")
 DISCRIM  = user.get("discriminator", "0000")
 USERID   = user.get("id", "unknown")
 
+print(f"{Fore.GREEN}[+] Logged in as {Fore.CYAN}{USERNAME}#{DISCRIM} {Fore.WHITE}({USERID})")
+
+# Fetch all real album image IDs at startup
+IMAGE_CACHE = preload_image_ids(PLAYLIST)
+
 def build_payload(entry: tuple) -> dict:
-    artist, song, album, track_id, album_image_id = entry
+    artist, song, album, track_id = entry
 
     local_dt, tz_name = uk_now()
     emoji    = clock_emoji(local_dt.hour)
@@ -153,6 +204,31 @@ def build_payload(entry: tuple) -> dict:
     duration_ms = random.randint(180_000, 300_000)
     start_ms    = now_ms - elapsed_ms
     end_ms      = start_ms + duration_ms
+
+    image_id = IMAGE_CACHE.get(track_id)
+
+    spotify_activity = {
+        "type":    2,
+        "name":    "Spotify",
+        "id":      "spotify:1",
+        "details": song,
+        "state":   artist,
+        "timestamps": {
+            "start": start_ms,
+            "end":   end_ms,
+        },
+        "sync_id":    track_id,
+        "session_id": f"{random.randint(10**15, 10**16)}",
+        "flags":      48,
+        "party":      {"id": f"spotify:{USERID}"},
+    }
+
+    # Only add album art assets if we got a real image ID
+    if image_id:
+        spotify_activity["assets"] = {
+            "large_image": f"spotify:{image_id}",
+            "large_text":  album,
+        }
 
     return {
         "op": 3,
@@ -168,26 +244,7 @@ def build_payload(entry: tuple) -> dict:
                     "id":    "custom",
                     "state": f"{emoji} {time_str}",
                 },
-                # Spotify rich presence — uses real track/album IDs for genuine look
-                {
-                    "type":    2,
-                    "name":    "Spotify",
-                    "id":      "spotify:1",
-                    "details": song,
-                    "state":   artist,
-                    "assets": {
-                        "large_image": f"spotify:{album_image_id}",
-                        "large_text":  album,
-                    },
-                    "timestamps": {
-                        "start": start_ms,
-                        "end":   end_ms,
-                    },
-                    "sync_id":    track_id,
-                    "session_id": f"{random.randint(10**15, 10**16)}",
-                    "flags":      48,
-                    "party":      {"id": f"spotify:{USERID}"},
-                },
+                spotify_activity,
             ],
         },
     }
@@ -256,7 +313,7 @@ async def onliner(token: str, status: str):
                                 last_entry    = current_entry
                                 song_timer    = SONG_INTERVAL
 
-                            artist, song, album, track_id, _ = current_entry
+                            artist, song, album, track_id = current_entry
                             payload  = build_payload(current_entry)
                             local_dt, tz = uk_now()
 
