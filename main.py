@@ -1,8 +1,7 @@
 # discord_clock_spotify.py
 # - Shows current UK time (GMT/BST) as custom status
 # - Shows fake Spotify rich presence with REAL album art
-#   (fetches real image IDs from Spotify's public oEmbed API at startup)
-# - ALL track IDs are verified real Spotify track IDs
+# - Implements Discord RESUME so you never appear offline on reconnect
 # - Updates clock every 30s, changes song every SONG_INTERVAL seconds
 #
 # WARNING: This automates a user account using a user token. That can violate
@@ -28,12 +27,12 @@ except Exception:
 init(autoreset=True)
 
 # ------- CONFIG -------
-STATUS        = "online"    # online / dnd / idle
-SONG_INTERVAL = 60          # seconds before song changes
+STATUS        = "online"
+SONG_INTERVAL = 60
 GATEWAY       = "wss://gateway.discord.gg/?v=10&encoding=json"
 # ----------------------
 
-# ---- UK CLOCK HELPERS ----
+# ---- UK CLOCK ----
 def uk_now():
     utc_now = datetime.now(timezone.utc)
     year = utc_now.year
@@ -55,64 +54,43 @@ def clock_emoji(hour24):
     return clocks.get(hour24, "🕛")
 
 # ---- PLAYLIST ----
-# Format: (artist, song, album, spotify_track_id)
-# ALL track IDs verified from real open.spotify.com URLs
 PLAYLIST = [
-    # Chase Atlantic — verified
     ("Chase Atlantic", "PHASES",   "PHASES",         "0AvVR6Bx52aY3cWdRDdTfx"),
     ("Chase Atlantic", "Friends",  "Nostalgia EP",   "7uDUb37h7Xdhza1eWMkoJv"),
     ("Chase Atlantic", "Into It",  "Chase Atlantic", "7D8DdqPvgLJkDruhvnz9NB"),
     ("Chase Atlantic", "Okay",     "Chase Atlantic", "492PZFHvGTm3RZZYeeUVWT"),
     ("Chase Atlantic", "Swim",     "Swim",           "2aZ5Ch59IWH33g9ln7lvi8"),
-
-    # beabadoobee — verified
     ("beabadoobee", "Coffee",            "Coffee",          "429NtPmr12aypzFH3FkN9l"),
-
-    # Lana Del Rey — verified
-    ("Lana Del Rey", "Video Games",         "Born To Die",   "33HucJaMg7OBQLqmaVx58p"),
-    ("Lana Del Rey", "Born To Die",         "Born To Die",   "4Ouhoi2lAhrLJKFzUqEzwl"),
-    ("Lana Del Rey", "Cherry",              "Lust for Life", "0sBojHJfRAIMd9SCBKE2nh"),
-
-    # TV Girl — verified
-    ("TV Girl", "Not Allowed", "Who Really Cares", "3IznIgmXtrUaoPWpQTy5jB"),
-
-    # Cigarettes After Sex — verified
-    ("Cigarettes After Sex", "Apocalypse", "Cigarettes After Sex", "0yc6Gst2xkRu0eMLeRMGCX"),
-
-    # NIKI — verified
-    ("NIKI", "Indigo",         "Head In The Clouds II", "349Wc5mDu52d4Uv8Eg9WZv"),
-    ("NIKI", "Backburner",     "Nicole",                "4x2PkqSLtuwv53hLqq4GiY"),
-    ("NIKI", "La La Lost You", "Head In The Clouds II", "0QZLSImbxep9NyhhlCGOWh"),
-    ("NIKI", "Before",         "Nicole",                "2OpC6XGVzBxV8bMz5n0gp4"),
-
-    # The Weeknd — verified
-    ("The Weeknd", "Blinding Lights",   "After Hours", "0VjIjW4GlUZAMYd2vXMi3b"),
-    ("The Weeknd", "Starboy",           "Starboy",     "7MXVkk9YMctZqd1Srtv4MB"),
-    ("The Weeknd", "Die For You",       "Starboy",     "0awWj9Wzj375IL5etqa1Dk"),
-    ("The Weeknd", "Snowchild",         "After Hours", "3WlbeuhfRSqU7ylK2Ui5U7"),
+    ("Lana Del Rey", "Video Games",      "Born To Die",     "33HucJaMg7OBQLqmaVx58p"),
+    ("Lana Del Rey", "Born To Die",      "Born To Die",     "4Ouhoi2lAhrLJKFzUqEzwl"),
+    ("Lana Del Rey", "Cherry",           "Lust for Life",   "0sBojHJfRAIMd9SCBKE2nh"),
+    ("TV Girl", "Not Allowed",           "Who Really Cares","3IznIgmXtrUaoPWpQTy5jB"),
+    ("Cigarettes After Sex", "Apocalypse","Cigarettes After Sex","0yc6Gst2xkRu0eMLeRMGCX"),
+    ("NIKI", "Indigo",         "Head In The Clouds II",     "349Wc5mDu52d4Uv8Eg9WZv"),
+    ("NIKI", "Backburner",     "Nicole",                    "4x2PkqSLtuwv53hLqq4GiY"),
+    ("NIKI", "La La Lost You", "Head In The Clouds II",     "0QZLSImbxep9NyhhlCGOWh"),
+    ("NIKI", "Before",         "Nicole",                    "2OpC6XGVzBxV8bMz5n0gp4"),
+    ("The Weeknd", "Blinding Lights",    "After Hours",     "0VjIjW4GlUZAMYd2vXMi3b"),
+    ("The Weeknd", "Starboy",            "Starboy",         "7MXVkk9YMctZqd1Srtv4MB"),
+    ("The Weeknd", "Die For You",        "Starboy",         "0awWj9Wzj375IL5etqa1Dk"),
+    ("The Weeknd", "Snowchild",          "After Hours",     "3WlbeuhfRSqU7ylK2Ui5U7"),
 ]
 
 def fetch_image_id(track_id: str) -> str | None:
-    """
-    Fetch the real Spotify album image hash using Spotify's public oEmbed endpoint.
-    No API key needed. Returns e.g. 'ab67616d00001e02xxxx...'
-    """
     try:
         url = f"https://open.spotify.com/oembed?url=https://open.spotify.com/track/{track_id}"
         r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
         if r.status_code == 200:
             thumbnail_url = r.json().get("thumbnail_url", "")
-            # e.g. https://i.scdn.co/image/ab67616d00001e02XXXX
             if "/image/" in thumbnail_url:
                 return thumbnail_url.split("/image/")[-1]
     except Exception as e:
         print(f"{Fore.YELLOW}    oEmbed error for {track_id}: {e}")
     return None
 
-def preload_image_ids(playlist: list) -> dict:
-    """Fetch real album image IDs for all unique track IDs at startup."""
-    cache = {}
-    unique = list({entry[3]: entry for entry in playlist}.values())
+def preload_image_ids(playlist):
+    cache  = {}
+    unique = list({e[3]: e for e in playlist}.values())
     total  = len(unique)
     print(f"{Fore.CYAN}[i] Fetching real album art for {total} tracks...")
     for i, entry in enumerate(unique, 1):
@@ -155,9 +133,8 @@ print(f"{Fore.GREEN}[+] Logged in as {Fore.CYAN}{USERNAME}#{DISCRIM} {Fore.WHITE
 
 IMAGE_CACHE = preload_image_ids(PLAYLIST)
 
-def build_payload(entry: tuple) -> dict:
+def build_payload(entry):
     artist, song, album, track_id = entry
-
     local_dt, tz_name = uk_now()
     emoji    = clock_emoji(local_dt.hour)
     time_str = f"{local_dt.hour:02d}:{local_dt.minute:02d} {tz_name}"
@@ -171,11 +148,11 @@ def build_payload(entry: tuple) -> dict:
     image_id = IMAGE_CACHE.get(track_id)
 
     spotify_activity = {
-        "type":    2,
-        "name":    "Spotify",
-        "id":      "spotify:1",
-        "details": song,
-        "state":   artist,
+        "type":       2,
+        "name":       "Spotify",
+        "id":         "spotify:1",
+        "details":    song,
+        "state":      artist,
         "timestamps": {"start": start_ms, "end": end_ms},
         "sync_id":    track_id,
         "session_id": str(random.randint(10**15, 10**16)),
@@ -206,31 +183,63 @@ async def onliner(token: str, status: str):
     last_entry    = None
     current_entry = random.choice(PLAYLIST)
 
+    # Session resume state — persists across reconnects
+    session_id    = None
+    resume_url    = None
+    last_sequence = None
+    should_resume = False
+
     while True:
         try:
-            async with websockets.connect(GATEWAY, ping_interval=None, max_size=None) as ws:
+            connect_url = (resume_url + "?v=10&encoding=json") if should_resume and resume_url else GATEWAY
+
+            async with websockets.connect(connect_url, ping_interval=None, max_size=None) as ws:
                 raw_hello = await ws.recv()
-                hello = json.loads(raw_hello)
+                hello     = json.loads(raw_hello)
                 hb_interval = hello["d"]["heartbeat_interval"]
-                print(f"{Fore.GREEN}[+] Connected. Heartbeat: {hb_interval} ms")
+                print(f"{Fore.GREEN}[+] Connected. Heartbeat: {hb_interval}ms | Resume: {should_resume}")
 
-                await ws.send(json.dumps({
-                    "op": 2,
-                    "d": {
-                        "token": token,
-                        "properties": {"$os": "Android", "$browser": "Discord Android", "$device": "Android"},
-                        "presence": {"status": status, "afk": False},
-                    },
-                }))
-                print(f"{Fore.CYAN}[>] Sent IDENTIFY. Waiting for READY...")
+                if should_resume and session_id and last_sequence is not None:
+                    # Send RESUME instead of IDENTIFY — keeps presence alive, no offline gap
+                    await ws.send(json.dumps({
+                        "op": 6,
+                        "d": {
+                            "token":      token,
+                            "session_id": session_id,
+                            "seq":        last_sequence,
+                        }
+                    }))
+                    print(f"{Fore.CYAN}[>] Sent RESUME (session {session_id[:8]}...)")
+                else:
+                    # Fresh IDENTIFY
+                    await ws.send(json.dumps({
+                        "op": 2,
+                        "d": {
+                            "token": token,
+                            "properties": {
+                                "$os":      "Android",
+                                "$browser": "Discord Android",
+                                "$device":  "Android",
+                            },
+                            "presence": {"status": status, "afk": False},
+                        },
+                    }))
+                    print(f"{Fore.CYAN}[>] Sent IDENTIFY. Waiting for READY...")
 
-                ready_event = asyncio.Event()
+                ready_event   = asyncio.Event()
+                resumed_event = asyncio.Event()
+
+                # If resuming, we don't need READY — mark ready immediately
+                if should_resume:
+                    ready_event.set()
 
                 async def heartbeat_loop():
+                    # Send initial heartbeat jitter as Discord recommends
+                    await asyncio.sleep((hb_interval / 1000) * random.random())
                     try:
                         while True:
+                            await ws.send(json.dumps({"op": 1, "d": last_sequence}))
                             await asyncio.sleep(hb_interval / 1000)
-                            await ws.send(json.dumps({"op": 1, "d": None}))
                     except asyncio.CancelledError:
                         raise
                     except Exception as e:
@@ -240,7 +249,7 @@ async def onliner(token: str, status: str):
                     nonlocal current_entry, last_entry
                     try:
                         await ready_event.wait()
-                        await asyncio.sleep(0.8)
+                        await asyncio.sleep(0.5)
                         song_timer = 0
                         while True:
                             if song_timer <= 0:
@@ -254,8 +263,10 @@ async def onliner(token: str, status: str):
 
                             artist, song, album, track_id = current_entry
                             local_dt, tz = uk_now()
-                            print(f"{Fore.MAGENTA}[~] {local_dt.hour:02d}:{local_dt.minute:02d} {tz} | {artist} — {song} (next in {song_timer}s)")
-
+                            print(
+                                f"{Fore.MAGENTA}[~] {local_dt.hour:02d}:{local_dt.minute:02d} {tz} "
+                                f"| {artist} — {song} (next in {song_timer}s)"
+                            )
                             await ws.send(json.dumps(build_payload(current_entry), ensure_ascii=False))
                             await asyncio.sleep(30)
                             song_timer -= 30
@@ -265,6 +276,7 @@ async def onliner(token: str, status: str):
                         print(f"{Fore.YELLOW}[!] Presence error: {e}"); raise
 
                 async def recv_loop():
+                    nonlocal session_id, resume_url, last_sequence, should_resume
                     try:
                         while True:
                             raw = await ws.recv()
@@ -272,15 +284,56 @@ async def onliner(token: str, status: str):
                                 msg = json.loads(raw)
                             except Exception:
                                 continue
+
                             op = msg.get("op")
-                            if op == 0 and msg.get("t") == "READY":
-                                print(f"{Fore.GREEN}[i] READY.")
-                                if not ready_event.is_set(): ready_event.set()
-                            if op == 9:
-                                raise Exception("Invalid Session (op 9)")
+                            t  = msg.get("t")
+                            s  = msg.get("s")
+
+                            # Track sequence number for resume
+                            if s is not None:
+                                last_sequence = s
+
+                            if op == 0:
+                                if t == "READY":
+                                    d          = msg.get("d", {})
+                                    session_id = d.get("session_id")
+                                    resume_url = d.get("resume_gateway_url")
+                                    should_resume = True
+                                    print(f"{Fore.GREEN}[i] READY. Session: {session_id[:8] if session_id else '?'}...")
+                                    if not ready_event.is_set():
+                                        ready_event.set()
+
+                                elif t == "RESUMED":
+                                    # Resume successful — presence is restored automatically
+                                    print(f"{Fore.GREEN}[i] RESUMED successfully. No offline gap.")
+                                    if not ready_event.is_set():
+                                        ready_event.set()
+
+                            # op 9 = Invalid Session
+                            # d=True means resumable, d=False means start fresh
+                            elif op == 9:
+                                resumable = msg.get("d", False)
+                                if not resumable:
+                                    print(f"{Fore.YELLOW}[!] Invalid Session (not resumable). Starting fresh.")
+                                    should_resume = False
+                                    session_id    = None
+                                    resume_url    = None
+                                    last_sequence = None
+                                else:
+                                    print(f"{Fore.YELLOW}[!] Invalid Session (resumable). Will retry resume.")
+                                raise Exception(f"Invalid Session (resumable={resumable})")
+
+                            # op 7 = Discord asking us to reconnect (we resume)
+                            elif op == 7:
+                                print(f"{Fore.YELLOW}[!] Discord requested reconnect (op 7). Resuming...")
+                                raise Exception("Reconnect requested (op 7)")
+
+                            # Auth failures
                             d = msg.get("d") or {}
                             if isinstance(d, dict) and d.get("code") in (4003, 4004):
+                                should_resume = False
                                 raise Exception(f"Auth failure ({d['code']})")
+
                     except asyncio.CancelledError:
                         raise
                     except Exception as e:
@@ -299,12 +352,13 @@ async def onliner(token: str, status: str):
                         if exc: raise exc
 
         except Exception as e:
-            print(f"{Fore.RED}[-] Error: {e}. Reconnecting in 5s...")
-            await asyncio.sleep(5)
+            print(f"{Fore.RED}[-] Disconnected: {e}. Reconnecting in 2s...")
+            await asyncio.sleep(2)   # shorter delay since we resume now
 
 async def main():
     os.system("cls" if platform.system() == "Windows" else "clear")
-    print(f"{Fore.WHITE}[{Fore.LIGHTGREEN_EX}+{Fore.WHITE}] Logged in as {Fore.LIGHTBLUE_EX}{USERNAME}#{DISCRIM} {Fore.WHITE}({USERID})")
+    print(f"{Fore.WHITE}[{Fore.LIGHTGREEN_EX}+{Fore.WHITE}] Logged in as "
+          f"{Fore.LIGHTBLUE_EX}{USERNAME}#{DISCRIM} {Fore.WHITE}({USERID})")
     if HAVE_KEEP_ALIVE:
         try: keep_alive(); print(f"{Fore.GREEN}[i] keep_alive() started")
         except Exception: pass
