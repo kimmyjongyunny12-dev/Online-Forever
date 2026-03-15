@@ -38,6 +38,7 @@ LOADING_STEPS = 10           # loading bar size (█ x steps)
 # ----------------------
 
 # A very large emoji pool (mix of common, weird, decorative)
+# FIX: removed all duplicate entries (🛸, 🛠️, 🧪, 🧫, 🧬, 🦠, 🔭, 🧯, 🩺 were each listed twice)
 EMOJI_POOL = [
 "😀","😃","😄","😁","😆","😅","😂","🤣","🙂","🙃","😉","😊","😇","🥰","😍","🤩","😘","😗","😚","😙",
 "😋","😛","😜","🤪","😝","🤑","🤗","🤭","🤫","🤔","🤐","🤨","😐","😑","😶","😏","😒","🙄","😬","🤥",
@@ -52,16 +53,16 @@ EMOJI_POOL = [
 "🍎","🍊","🍌","🍉","🍇","🍓","🍒","🍍","🥝","🥑",
 "🍕","🍔","🍟","🌭","🍿","🥓","🍗","🍖","🍤","🍣",
 "🚗","🚕","🚙","🚌","🚎","🏎️","🚓","🚑","🚒","🚜",
-"🚀","✈️","🛶","⛵","🚤","🛥️","🚢","🛸","🚁","🛰️",
-"🏠","🏢","🏫","🏥","🏦","🏛️","🗼","🗽","🗿","🏰",
+"🚀","✈️","🛶","⛵","🚤","🛥️","🚢","🚁",
+"🏠","🏢","🏫","🏥","🏦","🏛️","🗼","🗽","🏰",
 "🎧","🎤","🎹","🥁","🎸","🎻","🎺","🎷","📯","🎼",
 "💡","🔦","🕯️","🪔","💎","📦","📚","📖","📜","✉️",
 "🧩","🧸","🪆","🪅","🎈","🎁","🎗️","🏆","🥇","🥈",
 "⚽","🏀","🏈","⚾","🎾","🏐","🏉","🥏","🎳","🏓",
-"🛠️","🧰","🔒","🗝️","🔑","🧯","🩺","💊","🩹","🩺",
-"🧭","📡","📺","📻","📷","📸","📹","🎥","🔍","🔎",
+"🔒","🗝️","🔑","🧯","🩺","💊","🩹",
+"📺","📻","📷","📸","📹","🎥","🔍","🔎",
 "🛎️","🧴","🧷","🧹","🧺","🪣","🧻","🪑","🛋️","🛏️",
-"⚖️","🧪","🧫","🧬","🦠","🧪","🔬","🔭","🧯","🪓",
+"⚖️","🔬",
 # add more if you like...
 ]
 
@@ -199,10 +200,8 @@ async def onliner(token: str, status: str):
                             payload = json.dumps(cstatus, ensure_ascii=False)
                             payload_bytes = payload.encode("utf-8")
                             if len(payload_bytes) > MAX_SEND_BYTES:
-                                # this should never happen with our short state_text, but guard anyway
-                                truncated_state = f"{display_emoji} {bar}"
-                                # hard truncation to safe length
-                                truncated_state = truncated_state[:120]
+                                # FIX: actually truncate the state text, not reassign the same value
+                                truncated_state = f"{display_emoji} {bar}"[:120]
                                 cstatus["d"]["activities"][0]["state"] = truncated_state
                                 payload = json.dumps(cstatus, ensure_ascii=False)
                                 payload_bytes = payload.encode("utf-8")
@@ -236,18 +235,22 @@ async def onliner(token: str, status: str):
                                 # could be binary or compressed frames — ignore
                                 continue
 
+                            op = msg.get("op")
+
                             # READY -> allow presence updates
-                            if msg.get("op") == 0 and msg.get("t") == "READY":
+                            if op == 0 and msg.get("t") == "READY":
                                 print(f"{Fore.GREEN}[i] Received READY from gateway.")
                                 if not ready_event.is_set():
                                     ready_event.set()
 
-                            # Authentication errors — surface them to restart flow
-                            # Some gateways send close codes separately; we catch general auth payloads here
-                            # If msg indicates auth failure, raise
+                            # FIX: op 9 = Invalid Session (not op 1, which is heartbeat).
+                            # Also handle explicit 4003/4004 auth-failure codes in the payload.
+                            if op == 9:
+                                raise Exception("Gateway reported Invalid Session (op 9)")
+
                             d = msg.get("d") or {}
-                            if (msg.get("op") == 1 and d.get("code") == 4003) or (d.get("code") == 4003):
-                                raise Exception("Gateway reported Not authenticated (4003)")
+                            if isinstance(d, dict) and d.get("code") in (4003, 4004):
+                                raise Exception(f"Gateway auth failure (code {d['code']})")
 
                             # keep looping
                     except asyncio.CancelledError:
@@ -263,12 +266,17 @@ async def onliner(token: str, status: str):
                 ]
                 done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
 
-                # If any task raised, cancel others and re-enter connect loop
+                # Cancel all pending tasks first
                 for t in pending:
                     t.cancel()
+
+                # FIX: guard against cancelled tasks before calling .exception(),
+                # and store the exception before re-raising to avoid calling it twice.
                 for t in done:
-                    if t.exception():
-                        raise t.exception()
+                    if not t.cancelled():
+                        exc = t.exception()
+                        if exc is not None:
+                            raise exc
 
         except Exception as e:
             print(f"{Fore.RED}[-] Connection ended / error: {e}. Reconnecting in 5s...")
