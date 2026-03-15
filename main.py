@@ -108,7 +108,7 @@ async def onliner(token: str, status: str):
 
     while True:
         try:
-            async with websockets.connect(GATEWAY, ping_interval=None) as ws:
+            async with websockets.connect(GATEWAY, ping_interval=None, max_size=None) as ws:
                 raw_hello = await ws.recv()
                 try:
                     hello = json.loads(raw_hello)
