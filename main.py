@@ -1,15 +1,26 @@
-# discord_mobile_status.py
+# discord_mobile_emoji_loading.py
+# Ready-to-run script:
+# - identifies as mobile (Android)
+# - every UPDATE_INTERVAL seconds:
+#     * generates a list of 50 random emojis (logged to console)
+#     * picks one emoji from that list to display in the custom status
+#     * appends a 10-step loading bar to the status (e.g. "🔮 [███░░░░░░]")
+# - maintains gateway heartbeat, waits for READY before sending presence
+#
+# WARNING: This automates a user account using a user token. That can violate
+# Discord's Terms of Service and may result in account action. Use at your own risk.
+
 import os
 import sys
 import json
 import asyncio
-import platform
 import random
+import platform
 import requests
 import websockets
 from colorama import init, Fore
 
-# Optional: keep_alive if you have a webserver to keep process alive (e.g., Replit)
+# Optional: if you host on Replit/Glitch and want to keep process alive, provide keep_alive.py
 try:
     from keep_alive import keep_alive
     HAVE_KEEP_ALIVE = True
@@ -18,96 +29,97 @@ except Exception:
 
 init(autoreset=True)
 
-# CONFIG
-STATUS = "online"                # online / dnd / idle
-UPDATE_INTERVAL = 600            # seconds between status updates (600 = 10 minutes)
+# ------- CONFIG -------
+STATUS = "online"             # online / dnd / idle
+UPDATE_INTERVAL = 60          # seconds between status updates
 GATEWAY = "wss://gateway.discord.gg/?v=9&encoding=json"
+MAX_SEND_BYTES = 1024 * 1024 - 2048  # keep well under 1 MiB
+LOADING_STEPS = 10           # loading bar size (█ x steps)
+# ----------------------
 
-# Weird emojis (obscure / aesthetic)
-EMOJIS = [
-    "🛸","👁️","🕳️","⚗️","🪐","🕸️","🧬","🪦","☢️","☣️",
-    "🗿","🪞","🧪","🧿","🪤","🪵","🦠","🧹","🩸","🩻",
-    "⚰️","☄️","🛠️","🛎️","🧲","🧱","🧊","🧸","🦴","🧭",
-    "🪃","🪁","🪀","🕹️","🕳️"
+# A very large emoji pool (mix of common, weird, decorative)
+EMOJI_POOL = [
+"😀","😃","😄","😁","😆","😅","😂","🤣","🙂","🙃","😉","😊","😇","🥰","😍","🤩","😘","😗","😚","😙",
+"😋","😛","😜","🤪","😝","🤑","🤗","🤭","🤫","🤔","🤐","🤨","😐","😑","😶","😏","😒","🙄","😬","🤥",
+"😌","😔","😪","🤤","😴","😷","🤒","🤕","🤢","🤮","🥴","😵","🤯","🤠","🥳","😎","🤓","🧐",
+"😕","😟","🙁","☹️","😮","😯","😲","😳","🥺","😦","😧","😨","😰","😥","😢","😭","😱","😖","😣",
+"😞","😓","😩","😫","🥱","😤","😡","😠","🤬","😈","👿","💀","☠️","👻","👽","👾","🤖","🎃",
+"🛸","🪐","🌙","⭐","✨","🔥","⚡","☄️","🌪️","🌈","🌊","❄️","🌋","🧊",
+"🧠","🫀","🫁","🦷","🦴","👁️","👀","🧬","🦠","🧫","🧪",
+"🗿","🪨","🧱","⚙️","🔩","🔧","🪛","🛠️","⛓️","🧲","🧰",
+"🕳️","🪞","🧿","🔮","📡","🛰️","🔭","📟","💾","💿",
+"🧭","🪤","🪓","🪃","🪁","🪀","🕹️","🎮","🎲","♟️",
+"🍎","🍊","🍌","🍉","🍇","🍓","🍒","🍍","🥝","🥑",
+"🍕","🍔","🍟","🌭","🍿","🥓","🍗","🍖","🍤","🍣",
+"🚗","🚕","🚙","🚌","🚎","🏎️","🚓","🚑","🚒","🚜",
+"🚀","✈️","🛶","⛵","🚤","🛥️","🚢","🛸","🚁","🛰️",
+"🏠","🏢","🏫","🏥","🏦","🏛️","🗼","🗽","🗿","🏰",
+"🎧","🎤","🎹","🥁","🎸","🎻","🎺","🎷","📯","🎼",
+"💡","🔦","🕯️","🪔","💎","📦","📚","📖","📜","✉️",
+"🧩","🧸","🪆","🪅","🎈","🎁","🎗️","🏆","🥇","🥈",
+"⚽","🏀","🏈","⚾","🎾","🏐","🏉","🥏","🎳","🏓",
+"🛠️","🧰","🔒","🗝️","🔑","🧯","🩺","💊","🩹","🩺",
+"🧭","📡","📺","📻","📷","📸","📹","🎥","🔍","🔎",
+"🛎️","🧴","🧷","🧹","🧺","🪣","🧻","🪑","🛋️","🛏️",
+"⚖️","🧪","🧫","🧬","🦠","🧪","🔬","🔭","🧯","🪓",
+# add more if you like...
 ]
 
-# Simple, one-word activities that describe what you're doing
-PHRASES = [
-    "ruminating",      # thinking deeply
-    "cogitating",      # meditating/thinking
-    "perambulating",   # walking slowly
-    "speculating",     # thinking/guessing
-    "contemplating",   # deep thought
-    "oscillating",     # moving back and forth
-    "meandering",      # wandering
-    "fluctuating",     # varying
-    "concocting",      # devising/creating
-    "ruminative",      # thoughtful, introspective
-    "pondering",       # thinking deeply
-    "musing",          # reflective thought
-    "interpolating",   # estimating between data points
-    "juxtaposing",     # comparing side by side
-    "cogitating",      # deep thinking
-    "enumerating",     # counting, listing
-    "reverberating",   # echoing, resonating
-    "perceiving",      # noticing, sensing
-    "calculating",     # mentally computing
-    "oscillatory",     # swinging, back-and-forth
-    "disambiguating",  # clarifying
-    "synthesizing",    # combining ideas
-    "deciphering",     # figuring out
-    "perusing",        # reading carefully
-    "delineating",     # describing precisely
-    "juxtaposition",   # act of placing side by side
-    "transmuting",     # transforming
-    "inferring",       # deducing
-    "abstracting",     # conceptualizing
-    "evanescing",      # fading away
-    "specifying",      # identifying precisely
-    "introspecting",   # self-reflecting
-    "postulating",     # hypothesizing
-    "oscillate",       # swing back and forth
-    "differentiating", # distinguishing
-    "metamorphosing",  # transforming
-    "catalyzing",      # causing change
-    "ruminatory",      # reflective
-]
-
-# Get token from environment
+# TOKEN must be set in environment variables
 TOKEN = os.getenv("TOKEN")
 if not TOKEN:
-    print(f"{Fore.WHITE}[{Fore.RED}-{Fore.WHITE}] Please set TOKEN in environment variables.")
+    print(f"{Fore.RED}[!] TOKEN environment variable not found. Exiting.")
     sys.exit(1)
 
-headers = {"Authorization": TOKEN, "Content-Type": "application/json"}
+HEADERS = {"Authorization": TOKEN, "Content-Type": "application/json"}
 
-# Validate token quickly
+# quick validate
 try:
-    r = requests.get("https://canary.discordapp.com/api/v9/users/@me", headers=headers, timeout=8)
+    resp = requests.get("https://canary.discordapp.com/api/v9/users/@me", headers=HEADERS, timeout=8)
 except Exception as e:
-    print(f"{Fore.WHITE}[{Fore.RED}!{Fore.WHITE}] Network error while validating token: {e}")
+    print(f"{Fore.YELLOW}[!] Network error while validating token: {e}")
     sys.exit(1)
 
-if r.status_code != 200:
-    print(f"{Fore.WHITE}[{Fore.RED}-{Fore.WHITE}] Token invalid or request blocked (status {r.status_code}).")
+if resp.status_code != 200:
+    print(f"{Fore.RED}[!] Token validation failed (status {resp.status_code}). Exiting.")
     sys.exit(1)
 
-user = r.json()
+user = resp.json()
 USERNAME = user.get("username", "unknown")
 DISCRIM = user.get("discriminator", "0000")
 USERID = user.get("id", "unknown")
 
+# helper: generate a list of n random emojis (without replacement if possible)
+def make_emoji_list(n=50):
+    pool = EMOJI_POOL.copy()
+    chosen = []
+    if len(pool) >= n:
+        chosen = random.sample(pool, n)
+    else:
+        # not enough unique emojis: sample with replacement
+        for _ in range(n):
+            chosen.append(random.choice(pool))
+    return chosen
+
 async def onliner(token: str, status: str):
+    last_display_emoji = None
+    loading_index = 0
+
     while True:
         try:
             async with websockets.connect(GATEWAY, ping_interval=None) as ws:
-                # Receive HELLO
-                hello = json.loads(await ws.recv())
-                hb_interval = hello["d"]["heartbeat_interval"]  # milliseconds
+                raw_hello = await ws.recv()
+                try:
+                    hello = json.loads(raw_hello)
+                except Exception:
+                    print(f"{Fore.YELLOW}[!] Could not decode HELLO payload.")
+                    raise
+
+                hb_interval = hello["d"]["heartbeat_interval"]
                 print(f"{Fore.GREEN}[+] Connected to gateway. Heartbeat interval: {hb_interval} ms")
 
-                # Identify as mobile
-                identify = {
+                # Identify as Android mobile
+                identify_payload = {
                     "op": 2,
                     "d": {
                         "token": token,
@@ -116,14 +128,15 @@ async def onliner(token: str, status: str):
                             "$browser": "Discord Android",
                             "$device": "Android"
                         },
-                        # presence here is optional; we'll push presence updates separately
-                        "presence": {"status": status, "afk": False},
+                        # presence optional; we will update after READY
+                        "presence": {"status": status, "afk": False}
                     }
                 }
-                await ws.send(json.dumps(identify))
-                print(f"{Fore.CYAN}[>] Sent IDENTIFY (mobile)")
+                await ws.send(json.dumps(identify_payload))
+                print(f"{Fore.CYAN}[>] Sent IDENTIFY (Android). Waiting for READY...")
 
-                # helper loops
+                ready_event = asyncio.Event()
+
                 async def heartbeat_loop():
                     try:
                         while True:
@@ -131,78 +144,134 @@ async def onliner(token: str, status: str):
                             await ws.send(json.dumps({"op": 1, "d": None}))
                     except asyncio.CancelledError:
                         raise
-                    except Exception as exc:
-                        # Let outer scope handle reconnect
-                        print(f"{Fore.YELLOW}[!] Heartbeat loop error: {exc}")
+                    except Exception as e:
+                        print(f"{Fore.YELLOW}[!] Heartbeat error: {e}")
                         raise
 
                 async def status_loop():
+                    nonlocal last_display_emoji, loading_index
                     try:
-                        # initial small delay to let identify settle
-                        await asyncio.sleep(1.5)
+                        await ready_event.wait()
+                        await asyncio.sleep(0.8)  # small buffer
                         while True:
-                            emoji = random.choice(EMOJIS)
-                            phrase = random.choice(PHRASES)
+                            # generate 50-random-emoji list (console only)
+                            emoji_list = make_emoji_list(50)
+
+                            # pick a display emoji from that list, avoid repeating same emoji twice
+                            display_emoji = random.choice(emoji_list)
+                            if display_emoji == last_display_emoji:
+                                # try to pick a different one (up to a few times)
+                                for _ in range(4):
+                                    candidate = random.choice(emoji_list)
+                                    if candidate != last_display_emoji:
+                                        display_emoji = candidate
+                                        break
+
+                            last_display_emoji = display_emoji
+
+                            # loading bar progress (cycles 0..LOADING_STEPS)
+                            loading_index = (loading_index + 1) % (LOADING_STEPS + 1)
+                            filled = "█" * loading_index
+                            empty = "░" * (LOADING_STEPS - loading_index)
+                            bar = f"[{filled}{empty}]"
+
+                            # Compose state: single emoji + space + loading bar
+                            state_text = f"{display_emoji} {bar}"
+
+                            # Safety: ensure final payload is small
                             cstatus = {
                                 "op": 3,
                                 "d": {
                                     "since": 0,
                                     "activities": [
                                         {
-                                            "type": 4,                # custom status
-                                            "state": phrase,         # the one-word phrase
+                                            "type": 4,            # custom status
+                                            "state": state_text,  # text shown under name
                                             "name": "Custom Status",
-                                            "id": "custom",
-                                            "emoji": {
-                                                "name": emoji,
-                                                "id": None,
-                                                "animated": False
-                                            }
+                                            "id": "custom"
                                         }
                                     ],
                                     "status": status,
                                     "afk": False
                                 }
                             }
-                            await ws.send(json.dumps(cstatus))
-                            print(f"{Fore.MAGENTA}[~] Updated status: {emoji} {phrase}")
+
+                            payload = json.dumps(cstatus, ensure_ascii=False)
+                            payload_bytes = payload.encode("utf-8")
+                            if len(payload_bytes) > MAX_SEND_BYTES:
+                                # this should never happen with our short state_text, but guard anyway
+                                truncated_state = f"{display_emoji} {bar}"
+                                # hard truncation to safe length
+                                truncated_state = truncated_state[:120]
+                                cstatus["d"]["activities"][0]["state"] = truncated_state
+                                payload = json.dumps(cstatus, ensure_ascii=False)
+                                payload_bytes = payload.encode("utf-8")
+                                print(f"{Fore.YELLOW}[!] Payload was oversized, truncated state.")
+
+                            # log the generated 50 emoji list compactly
+                            try:
+                                compact_list = "".join(emoji_list)
+                            except Exception:
+                                compact_list = str(emoji_list)
+
+                            print(f"{Fore.MAGENTA}[~] Sending status: {state_text}  (payload {len(payload_bytes)} bytes)")
+                            print(f"{Fore.WHITE}[i] Emoji list (50): {compact_list}")
+
+                            await ws.send(payload)
                             await asyncio.sleep(UPDATE_INTERVAL)
                     except asyncio.CancelledError:
                         raise
-                    except Exception as exc:
-                        print(f"{Fore.YELLOW}[!] Status loop error: {exc}")
+                    except Exception as e:
+                        print(f"{Fore.YELLOW}[!] Status loop error: {e}")
                         raise
 
                 async def recv_loop():
-                    # read incoming events so the server doesn't consider us idle/unresponsive
                     try:
                         while True:
-                            msg = await ws.recv()
-                            # We don't need to process everything; just keep the connection alive.
-                            # Optionally ack or handle opcodes here.
+                            raw = await ws.recv()
+                            # try decode; ignore frames we can't parse
+                            try:
+                                msg = json.loads(raw)
+                            except Exception:
+                                # could be binary or compressed frames — ignore
+                                continue
+
+                            # READY -> allow presence updates
+                            if msg.get("op") == 0 and msg.get("t") == "READY":
+                                print(f"{Fore.GREEN}[i] Received READY from gateway.")
+                                if not ready_event.is_set():
+                                    ready_event.set()
+
+                            # Authentication errors — surface them to restart flow
+                            # Some gateways send close codes separately; we catch general auth payloads here
+                            # If msg indicates auth failure, raise
+                            d = msg.get("d") or {}
+                            if (msg.get("op") == 1 and d.get("code") == 4003) or (d.get("code") == 4003):
+                                raise Exception("Gateway reported Not authenticated (4003)")
+
+                            # keep looping
                     except asyncio.CancelledError:
                         raise
-                    except Exception as exc:
-                        print(f"{Fore.YELLOW}[!] Recv loop error: {exc}")
+                    except Exception as e:
+                        print(f"{Fore.YELLOW}[!] Recv loop error: {e}")
                         raise
 
-                # Run loops concurrently; if any fails, cancel others and reconnect
                 tasks = [
                     asyncio.create_task(heartbeat_loop()),
                     asyncio.create_task(status_loop()),
-                    asyncio.create_task(recv_loop()),
+                    asyncio.create_task(recv_loop())
                 ]
                 done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
-                # if we get here, one task raised; cancel others
+
+                # If any task raised, cancel others and re-enter connect loop
                 for t in pending:
                     t.cancel()
-                # raise first exception so outer try handles reconnect
                 for t in done:
                     if t.exception():
                         raise t.exception()
 
         except Exception as e:
-            print(f"{Fore.RED}[-] Connection ended or error: {e}. Reconnecting in 5s...")
+            print(f"{Fore.RED}[-] Connection ended / error: {e}. Reconnecting in 5s...")
             await asyncio.sleep(5)
             continue
 
@@ -211,6 +280,7 @@ async def main():
         os.system("cls")
     else:
         os.system("clear")
+
     print(f"{Fore.WHITE}[{Fore.LIGHTGREEN_EX}+{Fore.WHITE}] Logged in as {Fore.LIGHTBLUE_EX}{USERNAME}#{DISCRIM} {Fore.WHITE}({USERID})")
     if HAVE_KEEP_ALIVE:
         try:
@@ -218,6 +288,7 @@ async def main():
             print(f"{Fore.GREEN}[i] keep_alive() started")
         except Exception:
             pass
+
     await onliner(TOKEN, STATUS)
 
 if __name__ == "__main__":
