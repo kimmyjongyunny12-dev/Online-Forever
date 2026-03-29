@@ -192,7 +192,7 @@ def build_payload(entry):
             "status":     STATUS,
             "afk":        False,
             "activities": [
-                {"type": 4, "name": "Custom Status", "id": "custom", "state": "📚 DND | Studying"},
+                {"type": 4, "name": "Custom Status", "id": "custom", "state": f"{emoji} {time_str}"},
                 spotify_activity,
             ],
         },
