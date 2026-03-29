@@ -29,7 +29,7 @@ except Exception:
 init(autoreset=True)
 
 # ------- CONFIG -------
-STATUS        = "dnd"
+STATUS        = "online"
 SONG_INTERVAL = 60                                        # seconds per song
 GATEWAY       = "wss://gateway.discord.gg/?v=10&encoding=json"
 PING_URL      = "https://online-forever-7pko.onrender.com"  # Render keep-alive ping
