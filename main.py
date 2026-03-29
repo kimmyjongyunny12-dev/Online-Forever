@@ -29,7 +29,7 @@ except Exception:
 init(autoreset=True)
 
 # ------- CONFIG -------
-STATUS        = "online"
+STATUS        = "dnd"
 SONG_INTERVAL = 60                                        # seconds per song
 GATEWAY       = "wss://gateway.discord.gg/?v=10&encoding=json"
 PING_URL      = "https://online-forever-7pko.onrender.com"  # Render keep-alive ping
@@ -192,7 +192,7 @@ def build_payload(entry):
             "status":     STATUS,
             "afk":        False,
             "activities": [
-                {"type": 4, "name": "Custom Status", "id": "custom", "state": f"{emoji} {time_str}"},
+                {"type": 4, "name": "Custom Status", "id": "custom", "state": "📚 DND | Studying"},
                 spotify_activity,
             ],
         },
